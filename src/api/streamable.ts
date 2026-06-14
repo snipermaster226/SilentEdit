@@ -2,31 +2,24 @@ import { storage } from "@vendetta/plugin";
 
 const STREAMABLE_API = "https://api.streamable.com";
 
-export interface StreamableResponse {
-    shortcode: string;
-    status: number;
-    url?: string;
-}
-
 export async function uploadToStreamable(file: any): Promise<string | null> {
     try {
         const filename = file?.filename ?? "video.mp4";
-        const uri = file?.uri ?? file?.path;
+        const uri = file?.uri ?? file?.path ?? file?.fileUri;
 
         if (!uri) throw new Error("No file URI found");
+
+        console.log("[VidShare] Uploading to Streamable:", filename, uri);
 
         const formData = new FormData();
         formData.append("file", {
             uri,
             name: filename,
-            type: file?.mimeType ?? "video/mp4",
+            type: file?.mimeType ?? file?.type ?? "video/mp4",
         } as any);
 
-        const headers: Record<string, string> = {
-            "Accept": "application/json",
-        };
+        const headers: Record<string, string> = {};
 
-        // Use basic auth if credentials are provided
         const username = storage.streamableUsername?.trim();
         const password = storage.streamablePassword?.trim();
         if (username && password) {
@@ -40,18 +33,15 @@ export async function uploadToStreamable(file: any): Promise<string | null> {
             body: formData,
         });
 
-        if (!response.ok) {
-            const text = await response.text();
-            throw new Error(`Streamable error ${response.status}: ${text}`);
-        }
+        const text = await response.text();
+        console.log("[VidShare] Streamable response:", response.status, text);
 
-        const data: StreamableResponse = await response.json();
+        if (!response.ok) throw new Error(`Streamable ${response.status}: ${text}`);
 
+        const data = JSON.parse(text);
         if (!data.shortcode) throw new Error("No shortcode in response");
 
-        // Poll until video is ready (status 2 = ready)
-        const link = `https://streamable.com/${data.shortcode}`;
-        return link;
+        return `https://streamable.com/${data.shortcode}`;
     } catch (err) {
         console.error("[VidShare] Streamable upload error:", err);
         return null;
