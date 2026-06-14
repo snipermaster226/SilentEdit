@@ -1,0 +1,1 @@
+{"name":"VidShare","description":"Automatically uploads videos exceeding your server's file size limit to Streamable.","authors":[{"name":"snipermaster226","id":"YOUR_DISCORD_ID"}],"main":"index.js","vendetta":{"icon":"ic_file_upload_24px"},"hash":"e16e2fecbf26b8e5d58eb1e1c43c6b0a62732c50b7b8746208cbbaf0732b30f2"}
