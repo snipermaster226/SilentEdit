@@ -1,0 +1,14 @@
+{
+    "name": "VidShare",
+    "description": "Automatically uploads videos exceeding your server's file size limit to Streamable.",
+    "authors": [
+        {
+            "name": "snipermaster226",
+            "id": "YOUR_DISCORD_ID"
+        }
+    ],
+    "main": "src/index.tsx",
+    "vendetta": {
+        "icon": "ic_file_upload_24px"
+    }
+}
