@@ -2,92 +2,138 @@ import { findByProps } from "@vendetta/metro";
 import { before, after } from "@vendetta/patcher";
 import { storage } from "@vendetta/plugin";
 import { logger } from "@vendetta";
-import { React } from "@vendetta/metro/common";
+import { React, ReactNative as RN } from "@vendetta/metro/common";
 import { findInReactTree } from "@vendetta/utils";
 import { getAssetIDByName } from "@vendetta/ui/assets";
 import Settings from "./Settings";
 
+const { useState } = React;
+const { View, Text, TextInput, TouchableOpacity, StyleSheet } = RN;
+
 const ActionSheet = findByProps("openLazy", "hideActionSheet");
 const { ActionSheetRow } = findByProps("ActionSheetRow");
+// Discord's own modal system — same one used internally
+const NavigationActions = findByProps("openModal", "pushLazy");
 
 const EditIcon =
     getAssetIDByName("ic_edit_24px") ??
     getAssetIDByName("PencilIcon") ??
     getAssetIDByName("ic_pencil");
 
-async function sendReplacement(channelId: string, messageId: string, replacementText: string) {
-    const RestAPI = findByProps("get", "post", "del", "patch");
-    const suppressNotifications: boolean = storage.suppressNotifications ?? true;
-    try {
-        await RestAPI.post({
-            url: `/channels/${channelId}/messages`,
-            body: {
-                content: replacementText || "** **",
-                flags: suppressNotifications ? 4096 : 0,
-                mobile_network_type: "unknown",
-                nonce: messageId,
-                tts: false,
-            },
-        });
-        logger.log("[SilentEdit] Success!");
-    } catch (err) {
-        logger.log("[SilentEdit] Error: " + String(err));
-    }
+const styles = StyleSheet.create({
+    container: {
+        padding: 20,
+        paddingBottom: 36,
+    },
+    title: {
+        color: "#ffffff",
+        fontSize: 18,
+        fontWeight: "700",
+        marginBottom: 14,
+        textAlign: "center",
+    },
+    input: {
+        backgroundColor: "#2b2d31",
+        color: "#ffffff",
+        borderRadius: 8,
+        padding: 12,
+        fontSize: 15,
+        marginBottom: 14,
+        borderWidth: 1,
+        borderColor: "#3f4147",
+    },
+    buttonRow: {
+        flexDirection: "row",
+        gap: 10,
+    },
+    cancelBtn: {
+        flex: 1,
+        backgroundColor: "#2b2d31",
+        borderRadius: 8,
+        paddingVertical: 13,
+        alignItems: "center",
+    },
+    cancelText: {
+        color: "#b5bac1",
+        fontSize: 15,
+        fontWeight: "600",
+    },
+    sendBtn: {
+        flex: 1,
+        backgroundColor: "#5865f2",
+        borderRadius: 8,
+        paddingVertical: 13,
+        alignItems: "center",
+    },
+    sendText: {
+        color: "#ffffff",
+        fontSize: 15,
+        fontWeight: "600",
+    },
+});
+
+function SilentReplaceSheet({ onClose, channelId, messageId }: {
+    onClose: () => void;
+    channelId: string;
+    messageId: string;
+}) {
+    const [text, setText] = useState("");
+
+    const handleSend = async () => {
+        onClose();
+        const RestAPI = findByProps("get", "post", "del", "patch");
+        const suppressNotifications: boolean = storage.suppressNotifications ?? true;
+        const replacementText = text.trim() || "** **";
+        try {
+            await RestAPI.post({
+                url: `/channels/${channelId}/messages`,
+                body: {
+                    content: replacementText,
+                    flags: suppressNotifications ? 4096 : 0,
+                    mobile_network_type: "unknown",
+                    nonce: messageId,
+                    tts: false,
+                },
+            });
+            logger.log("[SilentEdit] Success!");
+        } catch (err) {
+            logger.log("[SilentEdit] Error: " + String(err));
+        }
+    };
+
+    return (
+        <View style={styles.container}>
+            <Text style={styles.title}>Silent Replace</Text>
+            <TextInput
+                style={styles.input}
+                placeholder="Enter replacement message..."
+                placeholderTextColor="#6d6f78"
+                value={text}
+                onChangeText={setText}
+                autoFocus={true}
+                returnKeyType="send"
+                onSubmitEditing={handleSend}
+            />
+            <View style={styles.buttonRow}>
+                <TouchableOpacity style={styles.cancelBtn} onPress={onClose}>
+                    <Text style={styles.cancelText}>Cancel</Text>
+                </TouchableOpacity>
+                <TouchableOpacity style={styles.sendBtn} onPress={handleSend}>
+                    <Text style={styles.sendText}>Send</Text>
+                </TouchableOpacity>
+            </View>
+        </View>
+    );
 }
 
-function openTextInputSheet(channelId: string, messageId: string) {
-    // Try Discord's built-in TextInputSheet / CustomTextInputActionSheet
-    const TextInputSheet = findByProps("TextInputActionSheet")
-        ?? findByProps("CustomTextInputActionSheet");
-
-    if (TextInputSheet) {
-        const SheetComp = TextInputSheet.TextInputActionSheet
-            ?? TextInputSheet.CustomTextInputActionSheet;
-
-        ActionSheet.openLazy(
-            Promise.resolve({ default: SheetComp }),
-            "TextInputActionSheet",
-            {
-                title: "Silent Replace",
-                placeholder: "Enter replacement message...",
-                submitLabel: "Send",
-                onSubmit: (text: string) => {
-                    ActionSheet.hideActionSheet();
-                    sendReplacement(channelId, messageId, text);
-                },
-                onCancel: () => ActionSheet.hideActionSheet(),
-            }
-        );
-        return;
-    }
-
-    // Fallback: use Discord's UserNoteSheet or similar text sheet
-    const UserNote = findByProps("openUserNoteSheet");
-    if (UserNote) {
-        logger.warn("[SilentEdit] TextInputActionSheet not found, trying fallback");
-    }
-
-    // Last resort fallback: use Clipboard + confirmation
-    const { Alert } = require("react-native");
-    const Clipboard = findByProps("setString", "getString");
-
-    // Open a simple confirm that tells user to paste
-    const SimpleAlert = findByProps("showSimpleTextInputAlert")
-        ?? findByProps("openAlert");
-
-    if (SimpleAlert?.showSimpleTextInputAlert) {
-        SimpleAlert.showSimpleTextInputAlert({
-            title: "Silent Replace",
-            placeholder: "Enter replacement message...",
-            confirmText: "Send",
-            confirmColor: "green",
-            onConfirm: (text: string) => sendReplacement(channelId, messageId, text),
-        });
-        return;
-    }
-
-    // Absolute last resort
-    logger.warn("[SilentEdit] No text input method found");
+function openReplaceModal(channelId: string, messageId: string) {
+    NavigationActions.openModal((props: any) =>
+        React.createElement(SilentReplaceSheet, {
+            onClose: props.onClose,
+            channelId,
+            messageId,
+        })
+    );
 }
 
 let unpatchOpenLazy: (() => void) | null = null;
@@ -127,7 +173,7 @@ export default {
                         }),
                         onPress: () => {
                             ActionSheet.hideActionSheet();
-                            setTimeout(() => openTextInputSheet(channelId, messageId), 400);
+                            setTimeout(() => openReplaceModal(channelId, messageId), 350);
                         },
                     });
 
