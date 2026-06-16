@@ -8,7 +8,7 @@ import { getAssetIDByName } from "@vendetta/ui/assets";
 import Settings from "./Settings";
 
 const { useState } = React;
-const { View, Text, TextInput, TouchableOpacity, StyleSheet, KeyboardAvoidingView, Platform } = RN;
+const { View, Text, TextInput, TouchableOpacity, StyleSheet, Modal, KeyboardAvoidingView, Platform, Pressable } = RN;
 
 const ActionSheet = findByProps("openLazy", "hideActionSheet");
 const { ActionSheetRow } = findByProps("ActionSheetRow");
@@ -19,7 +19,7 @@ const EditIcon =
     getAssetIDByName("ic_pencil");
 
 const styles = StyleSheet.create({
-    overlay: {
+    backdrop: {
         flex: 1,
         backgroundColor: "rgba(0,0,0,0.6)",
         justifyContent: "flex-end",
@@ -29,13 +29,13 @@ const styles = StyleSheet.create({
         borderTopLeftRadius: 16,
         borderTopRightRadius: 16,
         padding: 20,
-        paddingBottom: 32,
+        paddingBottom: 36,
     },
     title: {
         color: "#ffffff",
         fontSize: 18,
         fontWeight: "700",
-        marginBottom: 12,
+        marginBottom: 14,
         textAlign: "center",
     },
     input: {
@@ -44,7 +44,7 @@ const styles = StyleSheet.create({
         borderRadius: 8,
         padding: 12,
         fontSize: 15,
-        marginBottom: 16,
+        marginBottom: 14,
         borderWidth: 1,
         borderColor: "#3f4147",
     },
@@ -56,7 +56,7 @@ const styles = StyleSheet.create({
         flex: 1,
         backgroundColor: "#2b2d31",
         borderRadius: 8,
-        paddingVertical: 12,
+        paddingVertical: 13,
         alignItems: "center",
     },
     cancelText: {
@@ -68,7 +68,7 @@ const styles = StyleSheet.create({
         flex: 1,
         backgroundColor: "#5865f2",
         borderRadius: 8,
-        paddingVertical: 12,
+        paddingVertical: 13,
         alignItems: "center",
     },
     sendText: {
@@ -78,17 +78,15 @@ const styles = StyleSheet.create({
     },
 });
 
-function ReplacementModal({ channelId, messageId, modalKey }: { channelId: string; messageId: string; modalKey: string }) {
+function SilentReplaceModal({ channelId, messageId }: { channelId: string; messageId: string }) {
     const [text, setText] = useState("");
+    const [visible, setVisible] = useState(true);
 
     const handleSend = async () => {
-        // Lazy lookup inside handler to avoid top-level crash
-        const { closeModal } = findByProps("openModal", "closeModal");
-        closeModal(modalKey);
-
+        setVisible(false);
+        const replacementText = text.trim() || "** **";
         const RestAPI = findByProps("get", "post", "del", "patch");
         const suppressNotifications: boolean = storage.suppressNotifications ?? true;
-        const replacementText = text.trim() || "** **";
         try {
             await RestAPI.post({
                 url: `/channels/${channelId}/messages`,
@@ -106,45 +104,41 @@ function ReplacementModal({ channelId, messageId, modalKey }: { channelId: strin
         }
     };
 
-    const handleCancel = () => {
-        const { closeModal } = findByProps("openModal", "closeModal");
-        closeModal(modalKey);
-    };
-
     return (
-        <View style={styles.overlay}>
-            <KeyboardAvoidingView behavior={Platform.OS === "ios" ? "padding" : "height"}>
-                <View style={styles.sheet}>
-                    <Text style={styles.title}>Silent Replace</Text>
-                    <TextInput
-                        style={styles.input}
-                        placeholder="Enter replacement message..."
-                        placeholderTextColor="#6d6f78"
-                        value={text}
-                        onChangeText={setText}
-                        multiline={false}
-                        autoFocus={true}
-                        returnKeyType="send"
-                        onSubmitEditing={handleSend}
-                    />
-                    <View style={styles.buttonRow}>
-                        <TouchableOpacity style={styles.cancelBtn} onPress={handleCancel}>
-                            <Text style={styles.cancelText}>Cancel</Text>
-                        </TouchableOpacity>
-                        <TouchableOpacity style={styles.sendBtn} onPress={handleSend}>
-                            <Text style={styles.sendText}>Send</Text>
-                        </TouchableOpacity>
-                    </View>
-                </View>
-            </KeyboardAvoidingView>
-        </View>
+        <Modal
+            visible={visible}
+            transparent={true}
+            animationType="slide"
+            onRequestClose={() => setVisible(false)}
+            statusBarTranslucent={true}
+        >
+            <Pressable style={styles.backdrop} onPress={() => setVisible(false)}>
+                <KeyboardAvoidingView behavior={Platform.OS === "ios" ? "padding" : "height"}>
+                    <Pressable style={styles.sheet} onPress={() => {}}>
+                        <Text style={styles.title}>Silent Replace</Text>
+                        <TextInput
+                            style={styles.input}
+                            placeholder="Enter replacement message..."
+                            placeholderTextColor="#6d6f78"
+                            value={text}
+                            onChangeText={setText}
+                            autoFocus={true}
+                            returnKeyType="send"
+                            onSubmitEditing={handleSend}
+                        />
+                        <View style={styles.buttonRow}>
+                            <TouchableOpacity style={styles.cancelBtn} onPress={() => setVisible(false)}>
+                                <Text style={styles.cancelText}>Cancel</Text>
+                            </TouchableOpacity>
+                            <TouchableOpacity style={styles.sendBtn} onPress={handleSend}>
+                                <Text style={styles.sendText}>Send</Text>
+                            </TouchableOpacity>
+                        </View>
+                    </Pressable>
+                </KeyboardAvoidingView>
+            </Pressable>
+        </Modal>
     );
-}
-
-function showReplacementModal(channelId: string, messageId: string) {
-    const { openModal } = findByProps("openModal", "closeModal");
-    const key = `silent-edit-${Date.now()}`;
-    openModal(key, () => React.createElement(ReplacementModal, { channelId, messageId, modalKey: key }));
 }
 
 let unpatchOpenLazy: (() => void) | null = null;
@@ -177,6 +171,10 @@ export default {
                         return;
                     }
 
+                    // Track if our modal should show — stored in a ref on the component
+                    // so it survives re-renders of the sheet
+                    const [showModal, setShowModal] = React.useState(false);
+
                     const silentReplaceButton = React.createElement(ActionSheetRow, {
                         label: "Silent Replace",
                         icon: React.createElement(ActionSheetRow.Icon, {
@@ -184,9 +182,26 @@ export default {
                         }),
                         onPress: () => {
                             ActionSheet.hideActionSheet();
-                            showReplacementModal(channelId, messageId);
+                            setShowModal(true);
                         },
                     });
+
+                    // Inject our Modal directly into the sheet's render output
+                    if (showModal) {
+                        const existingChildren = Array.isArray(component?.props?.children)
+                            ? component.props.children
+                            : component?.props?.children
+                                ? [component.props.children]
+                                : [];
+                        component.props.children = [
+                            ...existingChildren,
+                            React.createElement(SilentReplaceModal, {
+                                key: "silent-replace-modal",
+                                channelId,
+                                messageId,
+                            }),
+                        ];
+                    }
 
                     let inserted = false;
                     for (let gi = 0; gi < groups.length; gi++) {
@@ -231,7 +246,3 @@ export default {
 
     settings: Settings,
 };
-
-
-
-
