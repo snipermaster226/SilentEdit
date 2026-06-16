@@ -7,53 +7,137 @@ import { findInReactTree } from "@vendetta/utils";
 import { getAssetIDByName } from "@vendetta/ui/assets";
 import Settings from "./Settings";
 
-const { useState, useRef } = React;
-const { Alert, TextInput, View, Text, StyleSheet } = RN;
+const { useState } = React;
+const { View, Text, TextInput, TouchableOpacity, StyleSheet, KeyboardAvoidingView, Platform } = RN;
 
 const ActionSheet = findByProps("openLazy", "hideActionSheet");
 const { ActionSheetRow } = findByProps("ActionSheetRow");
+const { openModal, closeModal } = findByProps("openModal", "closeModal");
+const ModalComponents = findByProps("ModalContent", "ModalFooter") ?? {};
 
 const EditIcon =
     getAssetIDByName("ic_edit_24px") ??
     getAssetIDByName("PencilIcon") ??
     getAssetIDByName("ic_pencil");
 
-function showReplacementPrompt(channelId: string, messageId: string) {
+const styles = StyleSheet.create({
+    overlay: {
+        flex: 1,
+        backgroundColor: "rgba(0,0,0,0.6)",
+        justifyContent: "flex-end",
+    },
+    sheet: {
+        backgroundColor: "#1e1f22",
+        borderTopLeftRadius: 16,
+        borderTopRightRadius: 16,
+        padding: 20,
+        paddingBottom: 32,
+    },
+    title: {
+        color: "#ffffff",
+        fontSize: 18,
+        fontWeight: "700",
+        marginBottom: 12,
+        textAlign: "center",
+    },
+    input: {
+        backgroundColor: "#2b2d31",
+        color: "#ffffff",
+        borderRadius: 8,
+        padding: 12,
+        fontSize: 15,
+        marginBottom: 16,
+        borderWidth: 1,
+        borderColor: "#3f4147",
+    },
+    buttonRow: {
+        flexDirection: "row",
+        gap: 10,
+    },
+    cancelBtn: {
+        flex: 1,
+        backgroundColor: "#2b2d31",
+        borderRadius: 8,
+        paddingVertical: 12,
+        alignItems: "center",
+    },
+    cancelText: {
+        color: "#b5bac1",
+        fontSize: 15,
+        fontWeight: "600",
+    },
+    sendBtn: {
+        flex: 1,
+        backgroundColor: "#5865f2",
+        borderRadius: 8,
+        paddingVertical: 12,
+        alignItems: "center",
+    },
+    sendText: {
+        color: "#ffffff",
+        fontSize: 15,
+        fontWeight: "600",
+    },
+});
+
+function ReplacementModal({ channelId, messageId, modalKey }: { channelId: string; messageId: string; modalKey: string }) {
+    const [text, setText] = useState("");
     const RestAPI = findByProps("get", "post", "del", "patch");
     const suppressNotifications: boolean = storage.suppressNotifications ?? true;
 
-    let inputValue = "";
-
-    Alert.prompt(
-        "Silent Replace",
-        "Enter the replacement message:",
-        [
-            { text: "Cancel", style: "cancel" },
-            {
-                text: "Send",
-                onPress: async (text?: string) => {
-                    const replacementText = (text ?? "").trim() || "** **";
-                    try {
-                        await RestAPI.post({
-                            url: `/channels/${channelId}/messages`,
-                            body: {
-                                content: replacementText,
-                                flags: suppressNotifications ? 4096 : 0,
-                                mobile_network_type: "unknown",
-                                nonce: messageId,
-                                tts: false,
-                            },
-                        });
-                        logger.log("[SilentDelete] Success!");
-                    } catch (err) {
-                        logger.log("[SilentDelete] Error: " + String(err));
-                    }
+    const handleSend = async () => {
+        closeModal(modalKey);
+        const replacementText = text.trim() || "** **";
+        try {
+            await RestAPI.post({
+                url: `/channels/${channelId}/messages`,
+                body: {
+                    content: replacementText,
+                    flags: suppressNotifications ? 4096 : 0,
+                    mobile_network_type: "unknown",
+                    nonce: messageId,
+                    tts: false,
                 },
-            },
-        ],
-        "plain-text",
-        "",
+            });
+            logger.log("[SilentEdit] Success!");
+        } catch (err) {
+            logger.log("[SilentEdit] Error: " + String(err));
+        }
+    };
+
+    return (
+        <View style={styles.overlay}>
+            <KeyboardAvoidingView behavior={Platform.OS === "ios" ? "padding" : "height"}>
+                <View style={styles.sheet}>
+                    <Text style={styles.title}>Silent Replace</Text>
+                    <TextInput
+                        style={styles.input}
+                        placeholder="Enter replacement message..."
+                        placeholderTextColor="#6d6f78"
+                        value={text}
+                        onChangeText={setText}
+                        multiline={false}
+                        autoFocus={true}
+                        returnKeyType="send"
+                        onSubmitEditing={handleSend}
+                    />
+                    <View style={styles.buttonRow}>
+                        <TouchableOpacity style={styles.cancelBtn} onPress={() => closeModal(modalKey)}>
+                            <Text style={styles.cancelText}>Cancel</Text>
+                        </TouchableOpacity>
+                        <TouchableOpacity style={styles.sendBtn} onPress={handleSend}>
+                            <Text style={styles.sendText}>Send</Text>
+                        </TouchableOpacity>
+                    </View>
+                </View>
+            </KeyboardAvoidingView>
+        </View>
     );
+}
+
+function showReplacementModal(channelId: string, messageId: string) {
+    const key = `silent-edit-${Date.now()}`;
+    openModal(key, () => React.createElement(ReplacementModal, { channelId, messageId, modalKey: key }));
 }
 
 let unpatchOpenLazy: (() => void) | null = null;
@@ -74,7 +158,6 @@ export default {
 
             comp.then((instance: any) => {
                 const unpatch = after("default", instance, (_: any, component: any) => {
-                    // Self-cleaning patch — removed after sheet unmounts
                     React.useEffect(() => () => { unpatch(); }, []);
 
                     const groups: any[] = findInReactTree(
@@ -83,7 +166,7 @@ export default {
                     );
 
                     if (!groups?.length) {
-                        logger.warn("[SilentDelete] Could not find ActionSheetRowGroups");
+                        logger.warn("[SilentEdit] Could not find ActionSheetRowGroups");
                         return;
                     }
 
@@ -94,7 +177,7 @@ export default {
                         }),
                         onPress: () => {
                             ActionSheet.hideActionSheet();
-                            showReplacementPrompt(channelId, messageId);
+                            showReplacementModal(channelId, messageId);
                         },
                     });
 
@@ -115,7 +198,6 @@ export default {
                         );
 
                         if (editRowIndex >= 0) {
-                            // Insert right after the Edit row
                             groupChildren.splice(editRowIndex + 1, 0, silentReplaceButton);
                             inserted = true;
                             break;
@@ -123,8 +205,7 @@ export default {
                     }
 
                     if (!inserted) {
-                        // Fallback: add as own group at the top
-                        logger.warn("[SilentDelete] Edit row not found, inserting at top");
+                        logger.warn("[SilentEdit] Edit row not found, inserting at top");
                         groups.splice(0, 0,
                             React.createElement(ActionSheetRow.Group, null, silentReplaceButton)
                         );
@@ -133,13 +214,13 @@ export default {
             });
         });
 
-        logger.log("[SilentDelete] Loaded.");
+        logger.log("[SilentEdit] Loaded.");
     },
 
     onUnload() {
         unpatchOpenLazy?.();
         unpatchOpenLazy = null;
-        logger.log("[SilentDelete] Unloaded.");
+        logger.log("[SilentEdit] Unloaded.");
     },
 
     settings: Settings,
