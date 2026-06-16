@@ -2,13 +2,10 @@ import { findByProps } from "@vendetta/metro";
 import { before, after } from "@vendetta/patcher";
 import { storage } from "@vendetta/plugin";
 import { logger } from "@vendetta";
-import { React, ReactNative as RN } from "@vendetta/metro/common";
+import { React } from "@vendetta/metro/common";
 import { findInReactTree } from "@vendetta/utils";
 import { getAssetIDByName } from "@vendetta/ui/assets";
 import Settings from "./Settings";
-
-const { useState } = React;
-const { View, Text, TextInput, TouchableOpacity, StyleSheet, Modal, KeyboardAvoidingView, Platform, Pressable } = RN;
 
 const ActionSheet = findByProps("openLazy", "hideActionSheet");
 const { ActionSheetRow } = findByProps("ActionSheetRow");
@@ -18,127 +15,79 @@ const EditIcon =
     getAssetIDByName("PencilIcon") ??
     getAssetIDByName("ic_pencil");
 
-const styles = StyleSheet.create({
-    backdrop: {
-        flex: 1,
-        backgroundColor: "rgba(0,0,0,0.6)",
-        justifyContent: "flex-end",
-    },
-    sheet: {
-        backgroundColor: "#1e1f22",
-        borderTopLeftRadius: 16,
-        borderTopRightRadius: 16,
-        padding: 20,
-        paddingBottom: 36,
-    },
-    title: {
-        color: "#ffffff",
-        fontSize: 18,
-        fontWeight: "700",
-        marginBottom: 14,
-        textAlign: "center",
-    },
-    input: {
-        backgroundColor: "#2b2d31",
-        color: "#ffffff",
-        borderRadius: 8,
-        padding: 12,
-        fontSize: 15,
-        marginBottom: 14,
-        borderWidth: 1,
-        borderColor: "#3f4147",
-    },
-    buttonRow: {
-        flexDirection: "row",
-        gap: 10,
-    },
-    cancelBtn: {
-        flex: 1,
-        backgroundColor: "#2b2d31",
-        borderRadius: 8,
-        paddingVertical: 13,
-        alignItems: "center",
-    },
-    cancelText: {
-        color: "#b5bac1",
-        fontSize: 15,
-        fontWeight: "600",
-    },
-    sendBtn: {
-        flex: 1,
-        backgroundColor: "#5865f2",
-        borderRadius: 8,
-        paddingVertical: 13,
-        alignItems: "center",
-    },
-    sendText: {
-        color: "#ffffff",
-        fontSize: 15,
-        fontWeight: "600",
-    },
-});
+async function sendReplacement(channelId: string, messageId: string, replacementText: string) {
+    const RestAPI = findByProps("get", "post", "del", "patch");
+    const suppressNotifications: boolean = storage.suppressNotifications ?? true;
+    try {
+        await RestAPI.post({
+            url: `/channels/${channelId}/messages`,
+            body: {
+                content: replacementText || "** **",
+                flags: suppressNotifications ? 4096 : 0,
+                mobile_network_type: "unknown",
+                nonce: messageId,
+                tts: false,
+            },
+        });
+        logger.log("[SilentEdit] Success!");
+    } catch (err) {
+        logger.log("[SilentEdit] Error: " + String(err));
+    }
+}
 
-function SilentReplaceModal({ channelId, messageId }: { channelId: string; messageId: string }) {
-    const [text, setText] = useState("");
-    const [visible, setVisible] = useState(true);
+function openTextInputSheet(channelId: string, messageId: string) {
+    // Try Discord's built-in TextInputSheet / CustomTextInputActionSheet
+    const TextInputSheet = findByProps("TextInputActionSheet")
+        ?? findByProps("CustomTextInputActionSheet");
 
-    const handleSend = async () => {
-        setVisible(false);
-        const replacementText = text.trim() || "** **";
-        const RestAPI = findByProps("get", "post", "del", "patch");
-        const suppressNotifications: boolean = storage.suppressNotifications ?? true;
-        try {
-            await RestAPI.post({
-                url: `/channels/${channelId}/messages`,
-                body: {
-                    content: replacementText,
-                    flags: suppressNotifications ? 4096 : 0,
-                    mobile_network_type: "unknown",
-                    nonce: messageId,
-                    tts: false,
+    if (TextInputSheet) {
+        const SheetComp = TextInputSheet.TextInputActionSheet
+            ?? TextInputSheet.CustomTextInputActionSheet;
+
+        ActionSheet.openLazy(
+            Promise.resolve({ default: SheetComp }),
+            "TextInputActionSheet",
+            {
+                title: "Silent Replace",
+                placeholder: "Enter replacement message...",
+                submitLabel: "Send",
+                onSubmit: (text: string) => {
+                    ActionSheet.hideActionSheet();
+                    sendReplacement(channelId, messageId, text);
                 },
-            });
-            logger.log("[SilentEdit] Success!");
-        } catch (err) {
-            logger.log("[SilentEdit] Error: " + String(err));
-        }
-    };
+                onCancel: () => ActionSheet.hideActionSheet(),
+            }
+        );
+        return;
+    }
 
-    return (
-        <Modal
-            visible={visible}
-            transparent={true}
-            animationType="slide"
-            onRequestClose={() => setVisible(false)}
-            statusBarTranslucent={true}
-        >
-            <Pressable style={styles.backdrop} onPress={() => setVisible(false)}>
-                <KeyboardAvoidingView behavior={Platform.OS === "ios" ? "padding" : "height"}>
-                    <Pressable style={styles.sheet} onPress={() => {}}>
-                        <Text style={styles.title}>Silent Replace</Text>
-                        <TextInput
-                            style={styles.input}
-                            placeholder="Enter replacement message..."
-                            placeholderTextColor="#6d6f78"
-                            value={text}
-                            onChangeText={setText}
-                            autoFocus={true}
-                            returnKeyType="send"
-                            onSubmitEditing={handleSend}
-                        />
-                        <View style={styles.buttonRow}>
-                            <TouchableOpacity style={styles.cancelBtn} onPress={() => setVisible(false)}>
-                                <Text style={styles.cancelText}>Cancel</Text>
-                            </TouchableOpacity>
-                            <TouchableOpacity style={styles.sendBtn} onPress={handleSend}>
-                                <Text style={styles.sendText}>Send</Text>
-                            </TouchableOpacity>
-                        </View>
-                    </Pressable>
-                </KeyboardAvoidingView>
-            </Pressable>
-        </Modal>
-    );
+    // Fallback: use Discord's UserNoteSheet or similar text sheet
+    const UserNote = findByProps("openUserNoteSheet");
+    if (UserNote) {
+        logger.warn("[SilentEdit] TextInputActionSheet not found, trying fallback");
+    }
+
+    // Last resort fallback: use Clipboard + confirmation
+    const { Alert } = require("react-native");
+    const Clipboard = findByProps("setString", "getString");
+
+    // Open a simple confirm that tells user to paste
+    const SimpleAlert = findByProps("showSimpleTextInputAlert")
+        ?? findByProps("openAlert");
+
+    if (SimpleAlert?.showSimpleTextInputAlert) {
+        SimpleAlert.showSimpleTextInputAlert({
+            title: "Silent Replace",
+            placeholder: "Enter replacement message...",
+            confirmText: "Send",
+            confirmColor: "green",
+            onConfirm: (text: string) => sendReplacement(channelId, messageId, text),
+        });
+        return;
+    }
+
+    // Absolute last resort
+    logger.warn("[SilentEdit] No text input method found");
 }
 
 let unpatchOpenLazy: (() => void) | null = null;
@@ -171,10 +120,6 @@ export default {
                         return;
                     }
 
-                    // Track if our modal should show — stored in a ref on the component
-                    // so it survives re-renders of the sheet
-                    const [showModal, setShowModal] = React.useState(false);
-
                     const silentReplaceButton = React.createElement(ActionSheetRow, {
                         label: "Silent Replace",
                         icon: React.createElement(ActionSheetRow.Icon, {
@@ -182,26 +127,9 @@ export default {
                         }),
                         onPress: () => {
                             ActionSheet.hideActionSheet();
-                            setShowModal(true);
+                            setTimeout(() => openTextInputSheet(channelId, messageId), 400);
                         },
                     });
-
-                    // Inject our Modal directly into the sheet's render output
-                    if (showModal) {
-                        const existingChildren = Array.isArray(component?.props?.children)
-                            ? component.props.children
-                            : component?.props?.children
-                                ? [component.props.children]
-                                : [];
-                        component.props.children = [
-                            ...existingChildren,
-                            React.createElement(SilentReplaceModal, {
-                                key: "silent-replace-modal",
-                                channelId,
-                                messageId,
-                            }),
-                        ];
-                    }
 
                     let inserted = false;
                     for (let gi = 0; gi < groups.length; gi++) {
