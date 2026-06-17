@@ -8,12 +8,12 @@ import { getAssetIDByName } from "@vendetta/ui/assets";
 import Settings from "./Settings";
 
 const { useState } = React;
-const { View, Text, TextInput, TouchableOpacity, StyleSheet } = RN;
+const { TextInput, StyleSheet } = RN;
 
 const ActionSheet = findByProps("openLazy", "hideActionSheet");
 const { ActionSheetRow } = findByProps("ActionSheetRow");
-// Discord's own modal system — same one used internally
-const NavigationActions = findByProps("openModal", "pushLazy");
+const AlertActions = findByProps("openAlert", "dismissAlert");
+const { AlertModal, AlertActionButton } = findByProps("AlertModal", "AlertActionButton");
 
 const EditIcon =
     getAssetIDByName("ic_edit_24px") ??
@@ -21,118 +21,86 @@ const EditIcon =
     getAssetIDByName("ic_pencil");
 
 const styles = StyleSheet.create({
-    container: {
-        padding: 20,
-        paddingBottom: 36,
-    },
-    title: {
-        color: "#ffffff",
-        fontSize: 18,
-        fontWeight: "700",
-        marginBottom: 14,
-        textAlign: "center",
-    },
     input: {
         backgroundColor: "#2b2d31",
         color: "#ffffff",
         borderRadius: 8,
         padding: 12,
         fontSize: 15,
-        marginBottom: 14,
         borderWidth: 1,
         borderColor: "#3f4147",
-    },
-    buttonRow: {
-        flexDirection: "row",
-        gap: 10,
-    },
-    cancelBtn: {
-        flex: 1,
-        backgroundColor: "#2b2d31",
-        borderRadius: 8,
-        paddingVertical: 13,
-        alignItems: "center",
-    },
-    cancelText: {
-        color: "#b5bac1",
-        fontSize: 15,
-        fontWeight: "600",
-    },
-    sendBtn: {
-        flex: 1,
-        backgroundColor: "#5865f2",
-        borderRadius: 8,
-        paddingVertical: 13,
-        alignItems: "center",
-    },
-    sendText: {
-        color: "#ffffff",
-        fontSize: 15,
-        fontWeight: "600",
+        marginTop: 8,
     },
 });
 
-function SilentReplaceSheet({ onClose, channelId, messageId }: {
-    onClose: () => void;
-    channelId: string;
-    messageId: string;
-}) {
+async function sendReplacement(channelId: string, messageId: string, replacementText: string) {
+    const RestAPI = findByProps("get", "post", "del", "patch");
+    const suppressNotifications: boolean = storage.suppressNotifications ?? true;
+    try {
+        await RestAPI.post({
+            url: `/channels/${channelId}/messages`,
+            body: {
+                content: replacementText.trim() || "** **",
+                flags: suppressNotifications ? 4096 : 0,
+                mobile_network_type: "unknown",
+                nonce: messageId,
+                tts: false,
+            },
+        });
+        logger.log("[SilentEdit] Success!");
+    } catch (err) {
+        logger.log("[SilentEdit] Error: " + String(err));
+    }
+}
+
+function ReplacementInput({ onChangeText }: { onChangeText: (t: string) => void }) {
     const [text, setText] = useState("");
-
-    const handleSend = async () => {
-        onClose();
-        const RestAPI = findByProps("get", "post", "del", "patch");
-        const suppressNotifications: boolean = storage.suppressNotifications ?? true;
-        const replacementText = text.trim() || "** **";
-        try {
-            await RestAPI.post({
-                url: `/channels/${channelId}/messages`,
-                body: {
-                    content: replacementText,
-                    flags: suppressNotifications ? 4096 : 0,
-                    mobile_network_type: "unknown",
-                    nonce: messageId,
-                    tts: false,
-                },
-            });
-            logger.log("[SilentEdit] Success!");
-        } catch (err) {
-            logger.log("[SilentEdit] Error: " + String(err));
-        }
-    };
-
     return (
-        <View style={styles.container}>
-            <Text style={styles.title}>Silent Replace</Text>
-            <TextInput
-                style={styles.input}
-                placeholder="Enter replacement message..."
-                placeholderTextColor="#6d6f78"
-                value={text}
-                onChangeText={setText}
-                autoFocus={true}
-                returnKeyType="send"
-                onSubmitEditing={handleSend}
-            />
-            <View style={styles.buttonRow}>
-                <TouchableOpacity style={styles.cancelBtn} onPress={onClose}>
-                    <Text style={styles.cancelText}>Cancel</Text>
-                </TouchableOpacity>
-                <TouchableOpacity style={styles.sendBtn} onPress={handleSend}>
-                    <Text style={styles.sendText}>Send</Text>
-                </TouchableOpacity>
-            </View>
-        </View>
+        <TextInput
+            style={styles.input}
+            placeholder="Enter replacement message..."
+            placeholderTextColor="#6d6f78"
+            autoFocus={true}
+            onChangeText={(t: string) => {
+                setText(t);
+                onChangeText(t);
+            }}
+        />
     );
 }
 
-function openReplaceModal(channelId: string, messageId: string) {
-    NavigationActions.openModal((props: any) =>
-        React.createElement(SilentReplaceSheet, {
-            onClose: props.onClose,
-            channelId,
-            messageId,
-        })
+function openReplaceAlert(channelId: string, messageId: string) {
+    let currentText = "";
+
+    AlertActions.openAlert(
+        "silent-edit-replace",
+        React.createElement(
+            AlertModal,
+            {
+                title: "Silent Replace",
+                content: "Enter the message that will replace this one.",
+                extraContent: React.createElement(ReplacementInput, {
+                    onChangeText: (t: string) => { currentText = t; },
+                }),
+                actions: React.createElement(
+                    React.Fragment,
+                    null,
+                    React.createElement(AlertActionButton, {
+                        text: "Send",
+                        variant: "primary",
+                        onPress: () => {
+                            AlertActions.dismissAlert("silent-edit-replace");
+                            sendReplacement(channelId, messageId, currentText);
+                        },
+                    }),
+                    React.createElement(AlertActionButton, {
+                        text: "Cancel",
+                        variant: "secondary",
+                        onPress: () => AlertActions.dismissAlert("silent-edit-replace"),
+                    }),
+                ),
+            }
+        )
     );
 }
 
@@ -173,7 +141,7 @@ export default {
                         }),
                         onPress: () => {
                             ActionSheet.hideActionSheet();
-                            setTimeout(() => openReplaceModal(channelId, messageId), 350);
+                            setTimeout(() => openReplaceAlert(channelId, messageId), 350);
                         },
                     });
 
